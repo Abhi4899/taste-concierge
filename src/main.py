@@ -1,31 +1,44 @@
-"""CLI entry point.
+"""CLI. Mainly a harness for poking at the engine without a UI in the way.
 
-Usage:
-    python -m src.main "I love Radiohead and Korean food, plan a Saturday in Delhi"
-
-Runs in MOCK mode with no API keys set, so it always produces output for a demo.
+    python -m src.main "I like qawwali and Kashmiri food, going out with friends in Delhi"
+    python -m src.main --trace "..."      also dumps every Qloo result it used
 """
+from __future__ import annotations
+
+import json
 import sys
 
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # dotenv is optional; env vars still work if set another way
+    pass
 
-from .agent import plan_outing
 from . import qloo_client
+from .agent import recommend
 from .llm import LLM
+
+DEFAULT = "I like qawwali and Kashmiri food, going out with friends in Delhi"
 
 
 def main(argv: list[str]) -> int:
-    prompt = " ".join(argv[1:]).strip() or (
-        "I love Radiohead and Korean food, plan a Saturday in Delhi"
-    )
-    mode = "MOCK" if qloo_client.MOCK else "LIVE"
-    print(f"[taste-concierge] Qloo: {mode} | LLM: {LLM().provider}\n")
-    print(f"Request: {prompt}\n{'-' * 60}")
-    print(plan_outing(prompt))
+    args = argv[1:]
+    trace = "--trace" in args
+    prompt = " ".join(a for a in args if a != "--trace").strip() or DEFAULT
+
+    llm = LLM()
+    print(f"qloo={'mock' if qloo_client.MOCK else 'live'}  llm={llm.model_name}")
+    print(f"> {prompt}")
+    print("-" * 60)
+
+    result = recommend(prompt, llm=llm, trace=trace)
+    if trace:
+        print(result["text"])
+        print("-" * 60)
+        print(json.dumps({k: v for k, v in result.items() if k != "text"},
+                         indent=2, default=str))
+    else:
+        print(result)
     return 0
 
 

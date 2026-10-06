@@ -1,7 +1,2 @@
 requests>=2.31
 python-dotenv>=1.0
-
-# Pick ONE LLM SDK to match LLM_PROVIDER in .env (all optional; mock mode needs none):
-# google-generativeai>=0.8     # for LLM_PROVIDER=gemini (has a free tier)
-# anthropic>=0.40              # for LLM_PROVIDER=anthropic
-# openai>=1.40                 # for LLM_PROVIDER=openai

@@ -22,3 +22,12 @@ Thumbs.db
 # Local scratch
 scratch/
 *.log
+
+# Working notes and planning — local only, not part of the submission
+CLAUDE.md
+RESUME.md
+docs/IDEAS.md
+docs/PLAN.md
+docs/BUILD_PLAN.md
+docs/SUBMISSION_CHECKLIST.md
+docs/*.html
