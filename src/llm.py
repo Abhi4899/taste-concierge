@@ -46,7 +46,7 @@ def _gemini(system: str, user: str, model: str) -> str:
     # The free tier hands out 503s when a model is busy and 429s when we've been
     # greedy. Both clear up on their own, so back off and try again. If the model
     # itself is busy for good, fall through to the next one in the list.
-    last = ""
+    failures: list[str] = []
     for candidate in _model_chain(model):
         for attempt in range(4):
             r = requests.post(
@@ -62,18 +62,20 @@ def _gemini(system: str, user: str, model: str) -> str:
                     raise RuntimeError(f"Couldn't read Gemini's reply: {json.dumps(data)[:300]}") from exc
                 return "".join(p.get("text", "") for p in parts).strip()
 
-            last = f"{candidate} -> {r.status_code}: {r.text[:200]}"
+            failures.append(f"{candidate} -> {r.status_code}")
             if r.status_code in (429, 503):
                 time.sleep(2 ** attempt)
                 continue
             break  # 400s and 404s won't fix themselves
 
-    raise RuntimeError(f"Gemini wouldn't answer. Last attempt: {last}")
+    raise RuntimeError("Gemini wouldn't answer. Tried: " + ", ".join(failures))
 
 
 def _model_chain(preferred: str) -> list[str]:
     """Preferred model first, then stand-ins for when it's overloaded."""
-    chain = [preferred, "gemini-flash-latest", "gemini-2.5-flash"]
+    # Only models this account can actually reach. 2.5-flash is NOT one of them
+    # any more; it 404s for new keys, which made the fallback look broken.
+    chain = [preferred, "gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]
     seen, out = set(), []
     for m in chain:
         if m not in seen:
