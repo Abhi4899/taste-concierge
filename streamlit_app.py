@@ -1,63 +1,120 @@
-# Throwaway smoke test: proves Streamlit Cloud can reach Qloo with our key.
-# Not the real UI.
+"""Taste Concierge, hosted.
+
+Deliberately thin. Everything that thinks lives in src/core; this file only collects
+a prompt and renders what comes back.
+
+One ordering trap: src.core.qloo reads QLOO_API_KEY at import time, so the secrets
+have to be in the environment before the import below, not after.
+"""
 import os
 import sys
-import time
 
-import requests
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv()
+st.set_page_config(page_title="Taste Concierge", page_icon="*", layout="centered")
 
 
-def get_key():
-    # st.secrets raises if there's no secrets.toml at all, which is the normal
-    # case locally, so fall back to .env.
+def _bridge_secrets() -> None:
+    """Copy Streamlit secrets into the environment so src/core can read them.
+
+    Locally there is usually no secrets.toml at all and st.secrets raises, so fall
+    back to whatever .env already put in the environment.
+    """
     try:
-        return st.secrets["QLOO_API_KEY"]
-    except (KeyError, FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
-        return os.getenv("QLOO_API_KEY", "")
-
-
-st.title("Qloo smoke test")
-st.caption(f"Python {sys.version.split()[0]} · Streamlit {st.__version__}")
-
-key = get_key()
-if not key:
-    st.error("No QLOO_API_KEY in st.secrets or the environment.")
-    st.stop()
-
-city = st.text_input("City", "Delhi")
-
-if st.button("Call Qloo"):
-    params = {
-        "filter.type": "urn:entity:place",
-        # Place queries need a category, otherwise Qloo returns malls and museums.
-        "filter.tags": "urn:tag:genre:place:restaurant",
-        "filter.location.query": city,
-        "take": 10,
-    }
-    started = time.perf_counter()
-    r, error = None, None
-    # Qloo times out often enough that one failure proves nothing.
-    for attempt in range(1, 4):
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+    for name in ("QLOO_API_KEY", "GEMINI_API_KEY", "GEMINI_MODEL", "LLM_PROVIDER"):
         try:
-            r = requests.get("https://hackathon.api.qloo.com/v2/insights", params=params,
-                             headers={"X-Api-Key": key}, timeout=30)
-            break
-        except requests.RequestException as exc:
-            error = exc
-    elapsed = time.perf_counter() - started
+            value = st.secrets[name]
+        except Exception:
+            continue
+        if value:
+            os.environ[name] = str(value)
+    # On the hosted app there is a real key, so use a real model.
+    if os.getenv("GEMINI_API_KEY") and not os.getenv("LLM_PROVIDER"):
+        os.environ["LLM_PROVIDER"] = "gemini"
 
-    if r is None:
-        st.error(f"No response after 3 attempts ({elapsed:.1f}s): {error}")
+
+_bridge_secrets()
+
+from src.core import qloo            # noqa: E402  (must follow _bridge_secrets)
+from src.core.agent import recommend  # noqa: E402
+from src.core.llm import LLM          # noqa: E402
+
+EXAMPLES = [
+    "I like qawwali and Kashmiri food, going out with friends in Delhi",
+    "Big fan of Wong Kar-wai films and Vietnamese food, an evening in Mumbai",
+    "I listen to John Coltrane and want somewhere to drink in London",
+]
+
+st.title("Taste Concierge")
+st.caption("Tell it what you love. Qloo's taste graph finds the rest.")
+
+with st.expander("Before you type anything, please read this"):
+    st.markdown(
+        "This runs on the **free tier of the Google Gemini API**. Under Google's API terms, "
+        "anything you enter and anything the model replies is used to improve Google's "
+        "products, and **human reviewers may read it**.\n\n"
+        "So: please don't enter personal, confidential or sensitive information. Tastes and a "
+        "city are all it needs.\n\n"
+        "The free tier is also not licensed for users in the EEA, Switzerland or the UK, and "
+        "is intended for people aged 18 or over.\n\n"
+        "Venue and culture data comes from the [Qloo](https://qloo.com) Taste AI API."
+    )
+
+if "prompt" not in st.session_state:
+    st.session_state.prompt = EXAMPLES[0]
+
+st.write("Try one of these:")
+cols = st.columns(len(EXAMPLES))
+for col, example in zip(cols, EXAMPLES):
+    label = example.split(",")[0]
+    if col.button(label, use_container_width=True):
+        st.session_state.prompt = example
+
+prompt = st.text_area("What do you like?", key="prompt", height=90)
+go = st.button("Find things I'd like", type="primary")
+
+if go:
+    if not prompt.strip():
+        st.warning("Tell it something you like first.")
+        st.stop()
+    try:
+        with st.spinner("Asking Qloo..."):
+            result = recommend(prompt, trace=True)
+    except Exception as exc:
+        # Free-tier quota and Qloo timeouts both surface here. Say which, plainly,
+        # rather than showing a stack trace to whoever is looking.
+        st.error(f"{type(exc).__name__}: {exc}")
         st.stop()
 
-    st.write(f"HTTP {r.status_code} in {elapsed:.1f}s (attempt {attempt})")
-    if r.ok:
-        results = r.json().get("results", {})
-        entities = results.get("entities", []) if isinstance(results, dict) else results
-        st.markdown("\n".join(f"- {e.get('name')}" for e in entities) or "No entities returned.")
-    else:
-        st.code(r.text[:500])
+    st.markdown(result["text"])
+
+    trail, results = result["resolved"], result["results"]
+    calls = len(trail) + len(results)
+    with st.expander(f"What Qloo was asked — {calls} calls, {len(trail)} tastes resolved"):
+        if trail:
+            st.write("**Resolved to Qloo entities and tags**")
+            st.dataframe(
+                [{"from": t.get("from"), "name": t.get("name"), "qloo id": t.get("qloo_id")}
+                 for t in trail],
+                use_container_width=True, hide_index=True)
+        for domain, rows in results.items():
+            st.write(f"**{domain.replace('_', ' ')}** — {len(rows)} results")
+            st.dataframe(
+                [{"name": r.get("name"), "area": r.get("neighborhood"),
+                  "tags": ", ".join(r.get("tags") or [])[:60]} for r in rows],
+                use_container_width=True, hide_index=True)
+        st.caption(
+            "Affinity scores are left out on purpose. Qloo returns them per call and they "
+            "aren't comparable between calls, so showing them implies a precision that "
+            "isn't there."
+        )
+
+st.divider()
+st.caption(
+    f"qloo: {'mock' if qloo.MOCK else 'live'} · model: {LLM().model_name} · "
+    f"python {sys.version.split()[0]}"
+)
