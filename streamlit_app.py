@@ -25,13 +25,18 @@ def _bridge_secrets() -> None:
         load_dotenv()
     except ImportError:
         pass
-    for name in ("QLOO_API_KEY", "GEMINI_API_KEY", "GEMINI_MODEL", "LLM_PROVIDER"):
+    # Keys only. GEMINI_MODEL is deliberately not read from secrets: which model we
+    # use is a measured decision that belongs in version control, and a stale secret
+    # quietly overriding it is how the hosted app ended up running a model with a
+    # 20-a-day quota while the code said something else entirely.
+    for name in ("QLOO_API_KEY", "GEMINI_API_KEY"):
         try:
             value = st.secrets[name]
         except Exception:
             continue
         if value:
             os.environ[name] = str(value)
+    os.environ.pop("GEMINI_MODEL", None)
     # On the hosted app there is a real key, so use a real model.
     if os.getenv("GEMINI_API_KEY") and not os.getenv("LLM_PROVIDER"):
         os.environ["LLM_PROVIDER"] = "gemini"
