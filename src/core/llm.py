@@ -21,7 +21,7 @@ class LLM:
     @property
     def model_name(self) -> str:
         if self.provider == "gemini":
-            return os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+            return os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
         return self.provider
 
     def complete(self, system: str, user: str) -> str:
@@ -98,8 +98,13 @@ def _model_chain(preferred: str) -> list[str]:
     #   gemini-flash-latest, gemini-pro-latest 429, their shared quota was spent
     #   gemini-3.7-flash, gemini-3.5-flash     503, busy more often than not
     #   gemini-3-flash-preview                 works but took 19s
-    chain = [preferred, "gemini-flash-lite-latest", "gemini-3.5-flash-lite",
-             "gemini-3.1-flash-lite", "gemini-3.8-flash"]
+    chain = [preferred, "gemini-3.1-flash-lite", "gemini-3.6-flash"]
+    # Lite first, and it is not about speed. Read off the AI Studio rate-limit
+    # page on 8 Oct: the full Flash models allow 5 requests a minute and only
+    # 20 a DAY, while Flash-Lite allows 15 a minute and 500 a day. An agent
+    # turn costs several calls, so on Flash a public demo dies after three or
+    # four visitors. We had already tripped the 3.8 Flash limit just testing.
+    # Keep one Flash at the end for the rare case where Lite is not enough.
     seen, out = set(), []
     for m in chain:
         if m not in seen:
