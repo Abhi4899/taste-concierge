@@ -23,11 +23,9 @@ Thumbs.db
 scratch/
 *.log
 
-# Working notes and planning — local only, not part of the submission
+# Working notes and planning - local only, not part of the submission.
+# Everything under docs/ is ours; nothing in there is needed to run or judge the
+# project. If the README ever needs a screenshot, un-ignore that one file.
 CLAUDE.md
 RESUME.md
-docs/IDEAS.md
-docs/PLAN.md
-docs/BUILD_PLAN.md
-docs/SUBMISSION_CHECKLIST.md
-docs/*.html
+docs/
