@@ -19,6 +19,9 @@ EXTRACT = """Pull the taste signals out of what the person wrote. Reply with JSO
 no prose and no code fences:
 
   artists    list of musician or band names they mentioned
+  genres     list of music genres or styles they mentioned, e.g. qawwali, ghazal, EDM.
+             Put a genre here, not in artists - "qawwali" is a genre, "Nusrat Fateh
+             Ali Khan" is an artist.
   films      list of film or TV titles they mentioned
   cuisines   list of cuisines or food styles
   city       the city they're asking about, your best guess if they didn't say
@@ -53,10 +56,11 @@ def _parse_json(raw: str) -> dict:
         return {}
 
 
-def resolve(seeds: dict) -> tuple[list[str], list[str], list[dict]]:
-    """Turn the names the person used into Qloo ids, and cuisines into tag ids."""
+def resolve(seeds: dict) -> dict:
+    """Turn the names someone used into Qloo ids, tags and genre tags."""
     entity_ids: list[str] = []
     cuisine_tags: list[str] = []
+    genre_tags: list[str] = []
     trail: list[dict] = []
 
     for key, entity_type in (("artists", qloo.ARTIST), ("films", qloo.MOVIE)):
@@ -64,19 +68,24 @@ def resolve(seeds: dict) -> tuple[list[str], list[str], list[dict]]:
             entity_ids.append(qloo.entity_id(hit))
             trail.append({"from": key, **qloo.summarize(hit)})
 
-    for cuisine in seeds.get("cuisines") or []:
-        tag = qloo.find_tag(cuisine)
-        tag_id = (tag or {}).get("id")
-        if tag_id:
-            cuisine_tags.append(tag_id)
-            trail.append({"from": "cuisines", "name": tag.get("name") or cuisine, "qloo_id": tag_id})
+    for key, bucket in (("cuisines", cuisine_tags), ("genres", genre_tags)):
+        for name in seeds.get(key) or []:
+            tag = qloo.find_tag(name)
+            tag_id = (tag or {}).get("id")
+            if tag_id:
+                bucket.append(tag_id)
+                trail.append({"from": key, "name": tag.get("name") or name, "qloo_id": tag_id})
 
-    return entity_ids, cuisine_tags, trail
+    return {"entity_ids": entity_ids, "cuisine_tags": cuisine_tags,
+            "genre_tags": genre_tags, "trail": trail}
 
 
-def gather(entity_ids: list[str], cuisine_tags: list[str], city: str | None) -> dict[str, list[dict]]:
+def gather(resolved: dict, city: str | None) -> dict[str, list[dict]]:
     """Ask Qloo for each domain separately, all seeded from the same tastes."""
-    if not entity_ids and not cuisine_tags:
+    entity_ids = resolved["entity_ids"]
+    cuisine_tags = resolved["cuisine_tags"]
+    genre_tags = resolved["genre_tags"]
+    if not (entity_ids or cuisine_tags or genre_tags):
         return {}
 
     out: dict[str, list[dict]] = {}
@@ -89,21 +98,27 @@ def gather(entity_ids: list[str], cuisine_tags: list[str], city: str | None) -> 
         if rows:
             out[name] = [qloo.summarize(r) for r in rows]
 
-    # One pass per cuisine, because cuisine tags can't be combined with each other
-    # or with a category filter.
+    # One pass per cuisine: cuisine tags can't be stacked, with each other or
+    # with a category filter.
     for tag in cuisine_tags:
-        label = tag.rsplit(":", 1)[-1]
-        add(f"eat_{label}", filter_type=qloo.PLACE, city=city, cuisine_tag=tag, take=8)
+        add(f"eat_{tag.rsplit(':', 1)[-1]}", filter_type=qloo.PLACE, city=city,
+            filter_tag=tag, take=8)
 
-    if entity_ids:
-        add("bars", filter_type=qloo.PLACE, entity_ids=entity_ids, city=city,
-            category=qloo.CAT_BAR, take=8)
-        add("live_music", filter_type=qloo.PLACE, entity_ids=entity_ids, city=city,
-            category=qloo.CAT_LIVE_MUSIC, take=6)
-        add("cafes", filter_type=qloo.PLACE, entity_ids=entity_ids, city=city,
-            category=qloo.CAT_CAFE, take=6)
-        add("artists", filter_type=qloo.ARTIST, entity_ids=entity_ids, take=6)
-        add("films", filter_type=qloo.MOVIE, entity_ids=entity_ids, take=6)
+    # A genre read two ways: who defines it, and who its listeners also like.
+    for tag in genre_tags:
+        label = tag.rsplit(":", 1)[-1]
+        add(f"{label}_artists", filter_type=qloo.ARTIST, filter_tag=tag, take=6)
+        add(f"{label}_adjacent", filter_type=qloo.ARTIST, signal_tags=[tag], take=6)
+
+    # Everything a genre or an artist can seed.
+    if entity_ids or genre_tags:
+        for name, category, n in (("bars", qloo.CAT_BAR, 8),
+                                  ("live_music", qloo.CAT_LIVE_MUSIC, 6),
+                                  ("cafes", qloo.CAT_CAFE, 6)):
+            add(name, filter_type=qloo.PLACE, entity_ids=entity_ids,
+                signal_tags=genre_tags, city=city, filter_tag=category, take=n)
+        add("films", filter_type=qloo.MOVIE, entity_ids=entity_ids,
+            signal_tags=genre_tags, take=6)
 
     return out
 
@@ -114,8 +129,8 @@ def recommend(prompt: str, llm: LLM | None = None, trace: bool = False):
     seeds = _parse_json(llm.complete(EXTRACT, prompt))
     seeds.setdefault("city", "Delhi")
 
-    entity_ids, cuisine_tags, trail = resolve(seeds)
-    results = gather(entity_ids, cuisine_tags, seeds.get("city"))
+    resolved = resolve(seeds)
+    results = gather(resolved, seeds.get("city"))
 
     if not results:
         text = ("Nothing in that matched a Qloo entity, so there's nothing to build on. "
@@ -125,10 +140,10 @@ def recommend(prompt: str, llm: LLM | None = None, trace: bool = False):
             "asked_for": prompt,
             "city": seeds.get("city"),
             "occasion": seeds.get("occasion"),
-            "resolved": trail,
+            "resolved": resolved["trail"],
             "qloo_results": results,
         }, indent=2, default=str))
 
     if trace:
-        return {"text": text, "seeds": seeds, "resolved": trail, "results": results}
+        return {"text": text, "seeds": seeds, "resolved": resolved["trail"], "results": results}
     return text

@@ -148,15 +148,23 @@ def insights(
     *,
     filter_type: str,
     entity_ids: list[str] | None = None,
+    signal_tags: list[str] | None = None,
     city: str | None = None,
-    category: str | None = None,
-    cuisine_tag: str | None = None,
+    filter_tag: str | None = None,
     take: int = 20,
 ) -> list[dict]:
     """The recommendation call.
 
-    `category` and `cuisine_tag` are mutually exclusive on purpose — see the note
-    at the top about mixing tag families. Pass whichever one you actually want.
+    The filter/signal split matters and isn't obvious from the docs. Asking for
+    artists with the qawwali genre tag:
+
+        filter_tag  -> Nusrat Fateh Ali Khan, Rahat Fateh Ali Khan, Abida Parveen
+                       i.e. artists who ARE qawwali singers
+        signal_tags -> Junaid Jamshed, Hadiqa Kiani, Tina Sani
+                       i.e. who qawwali listeners also listen to
+
+    Both are useful, they just answer different questions. Only pass one
+    `filter_tag` — stacking tags from different families returns junk.
     """
     if MOCK:
         return _MOCK.get(filter_type, [])[:take]
@@ -164,12 +172,12 @@ def insights(
     params: dict[str, Any] = {"filter.type": filter_type, "take": min(take, 50)}
     if entity_ids:
         params["signal.interests.entities"] = ",".join(entity_ids)
+    if signal_tags:
+        params["signal.interests.tags"] = ",".join(signal_tags)
     if city:
         params["filter.location.query"] = city
-    if cuisine_tag:
-        params["filter.tags"] = cuisine_tag
-    elif category:
-        params["filter.tags"] = category
+    if filter_tag:
+        params["filter.tags"] = filter_tag
 
     return _items(_get("/v2/insights", params))
 

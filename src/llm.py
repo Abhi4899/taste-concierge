@@ -49,10 +49,16 @@ def _gemini(system: str, user: str, model: str) -> str:
     failures: list[str] = []
     for candidate in _model_chain(model):
         for attempt in range(4):
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent",
-                json=body, headers={"x-goog-api-key": key}, timeout=60,
-            )
+            try:
+                r = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent",
+                    json=body, headers={"x-goog-api-key": key}, timeout=60,
+                )
+            except requests.RequestException:
+                # Read timeouts are common on the free tier and are worth another go.
+                failures.append(f"{candidate} -> timeout")
+                time.sleep(2 ** attempt)
+                continue
             if r.status_code < 400:
                 data = r.json()
                 try:
