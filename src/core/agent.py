@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from . import qloo_client as qloo
+from . import qloo
 from .llm import LLM
 
 EXTRACT = """Pull the taste signals out of what the person wrote. Reply with JSON only,

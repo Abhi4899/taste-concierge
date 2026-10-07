@@ -24,6 +24,8 @@ from typing import Any, Iterable
 
 import requests
 
+from . import cache
+
 BASE_URL = os.getenv("QLOO_BASE_URL", "https://hackathon.api.qloo.com").rstrip("/")
 API_KEY = os.getenv("QLOO_API_KEY") or ""
 MOCK = not API_KEY
@@ -41,7 +43,8 @@ CAT_BAR = "urn:tag:genre:place:restaurant:bar"
 CAT_CAFE = "urn:tag:genre:place:restaurant:cafe"
 CAT_LIVE_MUSIC = "urn:tag:genre:place:live_music_venue"
 
-_cache: dict[tuple, Any] = {}
+# Kept alongside the disk cache: within one run this saves even the file read.
+_memo: dict[str, Any] = {}
 
 
 class QlooError(RuntimeError):
@@ -54,14 +57,18 @@ def _headers() -> dict:
 
 def _get(path: str, params: dict) -> dict:
     params = {k: v for k, v in params.items() if v not in (None, "", [])}
-    key = (path, tuple(sorted(params.items())))
-    if key in _cache:
-        return _cache[key]
+    key = path + "?" + "&".join(f"{k}={v}" for k, v in sorted(params.items()))
 
-    # Qloo times out fairly often, so retry before giving up. Two attempts was
-    # enough in testing; three runs hit the 60s ceiling and still failed.
+    if key in _memo:
+        return _memo[key]
+    hit = cache.get("qloo", key)
+    if hit is not None:
+        _memo[key] = hit
+        return hit
+
+    # Qloo times out fairly often, so retry before giving up.
     last = None
-    for attempt in range(3):
+    for _ in range(3):
         try:
             r = requests.get(BASE_URL + path, params=params, headers=_headers(), timeout=TIMEOUT)
             break
@@ -77,7 +84,8 @@ def _get(path: str, params: dict) -> dict:
     except ValueError as exc:
         raise QlooError(f"{path} returned something that isn't JSON") from exc
 
-    _cache[key] = data
+    _memo[key] = data
+    cache.put("qloo", key, data)
     return data
 
 

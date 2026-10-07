@@ -29,3 +29,6 @@ scratch/
 CLAUDE.md
 RESUME.md
 docs/
+
+# Cached API responses
+.cache/

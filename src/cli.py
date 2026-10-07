@@ -1,7 +1,7 @@
 """CLI. Mainly a harness for poking at the engine without a UI in the way.
 
-    python -m src.main "I like qawwali and Kashmiri food, going out with friends in Delhi"
-    python -m src.main --trace "..."      also dumps every Qloo result it used
+    python -m src.cli "I like qawwali and Kashmiri food, going out with friends in Delhi"
+    python -m src.cli --trace "..."      also dumps every Qloo result it used
 """
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ try:
 except ImportError:
     pass
 
-from . import qloo_client
-from .agent import recommend
-from .llm import LLM
+from .core import qloo
+from .core.agent import recommend
+from .core.llm import LLM
 
 DEFAULT = "I like qawwali and Kashmiri food, going out with friends in Delhi"
 
@@ -27,7 +27,7 @@ def main(argv: list[str]) -> int:
     prompt = " ".join(a for a in args if a != "--trace").strip() or DEFAULT
 
     llm = LLM()
-    print(f"qloo={'mock' if qloo_client.MOCK else 'live'}  llm={llm.model_name}")
+    print(f"qloo={'mock' if qloo.MOCK else 'live'}  llm={llm.model_name}")
     print(f"> {prompt}")
     print("-" * 60)
 

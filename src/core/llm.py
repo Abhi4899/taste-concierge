@@ -11,6 +11,8 @@ import time
 
 import requests
 
+from . import cache
+
 
 class LLM:
     def __init__(self, provider: str | None = None):
@@ -19,7 +21,7 @@ class LLM:
     @property
     def model_name(self) -> str:
         if self.provider == "gemini":
-            return os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+            return os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         return self.provider
 
     def complete(self, system: str, user: str) -> str:
@@ -36,6 +38,15 @@ def _gemini(system: str, user: str, model: str) -> str:
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("LLM_PROVIDER=gemini but there's no GEMINI_API_KEY in .env")
+
+    # Cached so a repeated question is instant and gives the same answer twice.
+    # That matters for the demo: a recorded walkthrough shouldn't depend on whether
+    # the free tier feels like answering. Set LLM_NO_CACHE=1 to bypass.
+    cache_key = chr(10).join([model, system, user])
+    if not os.getenv("LLM_NO_CACHE"):
+        hit = cache.get("gemini", cache_key)
+        if hit:
+            return hit
 
     body = {
         "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -66,7 +77,10 @@ def _gemini(system: str, user: str, model: str) -> str:
                 except (KeyError, IndexError) as exc:
                     # Blocked response, or it hit the output cap mid-sentence.
                     raise RuntimeError(f"Couldn't read Gemini's reply: {json.dumps(data)[:300]}") from exc
-                return "".join(p.get("text", "") for p in parts).strip()
+                text = "".join(p.get("text", "") for p in parts).strip()
+                if text:
+                    cache.put("gemini", cache_key, text)
+                return text
 
             failures.append(f"{candidate} -> {r.status_code}")
             if r.status_code in (429, 503):
@@ -78,53 +92,17 @@ def _gemini(system: str, user: str, model: str) -> str:
 
 
 def _model_chain(preferred: str) -> list[str]:
-    """Preferred model first, then stand-ins for when it's overloaded."""
-    # Only models this account can actually reach. 2.5-flash is NOT one of them
-    # any more; it 404s for new keys, which made the fallback look broken.
-    chain = [preferred, "gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]
+    # Measured against this key on 8 Oct 2026, fastest usable first. Everything
+    # here answered a real request; the ones left out did not:
+    #   gemini-2.5-flash / -flash-lite / -pro  404, gone for keys created recently
+    #   gemini-flash-latest, gemini-pro-latest 429, their shared quota was spent
+    #   gemini-3.7-flash, gemini-3.5-flash     503, busy more often than not
+    #   gemini-3-flash-preview                 works but took 19s
+    chain = [preferred, "gemini-flash-lite-latest", "gemini-3.5-flash-lite",
+             "gemini-3.1-flash-lite", "gemini-3.8-flash"]
     seen, out = set(), []
     for m in chain:
         if m not in seen:
             seen.add(m)
             out.append(m)
     return out
-
-
-CITIES = ["delhi", "new delhi", "gurgaon", "mumbai", "bangalore", "bengaluru", "kolkata",
-          "chennai", "hyderabad", "pune", "goa", "london", "new york", "paris", "tokyo"]
-CUISINES = ["kashmiri", "north indian", "south indian", "mughlai", "indian chinese", "chinese",
-            "korean", "japanese", "italian", "thai", "vietnamese", "lebanese", "street food"]
-
-
-def _mock(system: str, user: str) -> str:
-    """Enough to exercise the pipeline offline. Not meant to read well."""
-    if "Reply with JSON only" in system:
-        low = user.lower()
-        return json.dumps({
-            "artists": _capitalised_names(user) or ["Nusrat Fateh Ali Khan"],
-            "films": [],
-            "cuisines": [c.title() for c in CUISINES if c in low] or ["Kashmiri"],
-            "city": next((c.title() for c in reversed(CITIES) if c in low), "Delhi"),
-            "occasion": "out with friends" if "friend" in low else "an evening out",
-        })
-
-    try:
-        payload = json.loads(user)
-    except json.JSONDecodeError:
-        return "(mock mode: nothing to show)"
-
-    lines = ["(mock mode - set LLM_PROVIDER=gemini in .env for real output)", ""]
-    for domain, rows in (payload.get("qloo_results") or {}).items():
-        lines.append(domain.replace("_", " ").title())
-        for row in rows[:4]:
-            where = f" ({row['neighborhood']})" if row.get("neighborhood") else ""
-            lines.append(f"  - {row['name']}{where}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _capitalised_names(text: str) -> list[str]:
-    """Crude stand-in for entity extraction: grab the Capitalised Words."""
-    skip = {"I", "Delhi", "Mumbai", "Saturday", "Sunday", "Friday"}
-    found = re.findall(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\b", text)
-    return [f for f in found if f not in skip][:3]
