@@ -44,9 +44,8 @@ def _bridge_secrets() -> None:
 
 _bridge_secrets()
 
-from src.core import qloo            # noqa: E402  (must follow _bridge_secrets)
-from src.core.agent import recommend  # noqa: E402
-from src.core.llm import LLM          # noqa: E402
+from src.core import loop, qloo  # noqa: E402  (must follow _bridge_secrets)
+from src.core.llm import LLM     # noqa: E402
 
 EXAMPLES = [
     "I like qawwali and Kashmiri food, going out with friends in Delhi",
@@ -87,8 +86,8 @@ if go:
         st.warning("Tell it something you like first.")
         st.stop()
     try:
-        with st.spinner("Asking Qloo..."):
-            result = recommend(prompt, trace=True)
+        with st.spinner("Working out what to ask Qloo..."):
+            result = loop.run(prompt)
     except Exception as exc:
         # Free-tier quota and Qloo timeouts both surface here. Say which, plainly,
         # rather than showing a stack trace to whoever is looking.
@@ -96,22 +95,22 @@ if go:
         st.stop()
 
     st.markdown(result["text"])
+    if result.get("hit_limit"):
+        st.info("The agent ran out of turns, so this answer may be incomplete.")
 
-    trail, results = result["resolved"], result["results"]
-    calls = len(trail) + len(results)
-    with st.expander(f"What Qloo was asked — {calls} calls, {len(trail)} tastes resolved"):
-        if trail:
-            st.write("**Resolved to Qloo entities and tags**")
-            st.dataframe(
-                [{"from": t.get("from"), "name": t.get("name"), "qloo id": t.get("qloo_id")}
-                 for t in trail],
-                use_container_width=True, hide_index=True)
-        for domain, rows in results.items():
-            st.write(f"**{domain.replace('_', ' ')}** — {len(rows)} results")
-            st.dataframe(
-                [{"name": r.get("name"), "area": r.get("neighborhood"),
-                  "tags": ", ".join(r.get("tags") or [])[:60]} for r in rows],
-                use_container_width=True, hide_index=True)
+    trace = result["trace"]
+    with st.expander(
+        f"What the agent decided to do — {len(trace)} Qloo calls over {result['turns']} turns"
+    ):
+        st.caption(
+            "Nothing below is scripted. The model is given the Qloo tools and picks which "
+            "to call, with what arguments, and when it has enough."
+        )
+        st.dataframe(
+            [{"turn": s["turn"], "tool": s["tool"],
+              "arguments": ", ".join(f"{k}={v}" for k, v in s["args"].items())[:80],
+              "came back": s["summary"]} for s in trace],
+            use_container_width=True, hide_index=True)
         st.caption(
             "Affinity scores are left out on purpose. Qloo returns them per call and they "
             "aren't comparable between calls, so showing them implies a precision that "

@@ -1,11 +1,10 @@
-"""CLI. Mainly a harness for poking at the engine without a UI in the way.
+"""CLI. Mainly a harness for driving the agent without a UI in the way.
 
-    python -m src.cli "I like qawwali and Kashmiri food, going out with friends in Delhi"
-    python -m src.cli --trace "..."      also dumps every Qloo result it used
+    python -m src.cli "I like qawwali and Kashmiri food, friends in Delhi"
+    python -m src.cli --trace "..."      also prints every Qloo call it chose to make
 """
 from __future__ import annotations
 
-import json
 import sys
 
 try:
@@ -14,8 +13,7 @@ try:
 except ImportError:
     pass
 
-from .core import qloo
-from .core.agent import recommend
+from .core import loop, qloo
 from .core.llm import LLM
 
 DEFAULT = "I like qawwali and Kashmiri food, going out with friends in Delhi"
@@ -31,14 +29,14 @@ def main(argv: list[str]) -> int:
     print(f"> {prompt}")
     print("-" * 60)
 
-    result = recommend(prompt, llm=llm, trace=trace)
+    result = loop.run(prompt, llm=llm)
+    print(result["text"])
+
     if trace:
-        print(result["text"])
         print("-" * 60)
-        print(json.dumps({k: v for k, v in result.items() if k != "text"},
-                         indent=2, default=str))
-    else:
-        print(result)
+        print(loop.describe(result))
+    if result.get("hit_limit"):
+        print("\n(note: the agent ran out of turns before it was finished)")
     return 0
 
 
